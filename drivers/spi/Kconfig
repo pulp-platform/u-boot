@@ -277,6 +277,12 @@ config OMAP3_SPI
 	  (McSPI). This driver be used to access SPI chips on platforms
 	  embedding this OMAP3 McSPI IP core.
 
+config OPENTITAN_QSPI
+	bool "OpenTitan QSPI Driver"
+	help
+	  Enable the OpenTitan QSPI driver. Currently only supports
+	  standard SPI speeds.
+
 config PIC32_SPI
 	bool "Microchip PIC32 SPI driver"
 	depends on MACH_PIC32
