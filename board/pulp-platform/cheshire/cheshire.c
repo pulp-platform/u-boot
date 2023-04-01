@@ -1,6 +1,6 @@
 #include <init.h>
 
-#define CHESHIRE_AXI_LLC_ADDR 0x02001000
+#define CHESHIRE_AXI_LLC_ADDR 0x03001000
 
 int board_init(void) {
   volatile unsigned int *axi_llc = (volatile unsigned int *) CHESHIRE_AXI_LLC_ADDR;
