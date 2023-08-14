@@ -19,9 +19,6 @@
 #define OPENTITAN_QSPI_RXFIFO_DEPTH 256
 #define OPENTITAN_QSPI_FIFO_DEPTH MIN(OPENTITAN_QSPI_TXFIFO_DEPTH, OPENTITAN_QSPI_RXFIFO_DEPTH)
 
-#define OPENTITAN_QSPI_CS_USED 0
-#define OPENTITAN_QSPI_CS_UNUSED 2
-
 #define OPENTITAN_QSPI_READY_TIMEOUT 10000
 #define OPENTITAN_QSPI_READ_TIMEOUT 10000
 
@@ -50,7 +47,11 @@ struct opentitan_qspi_priv {
 	volatile unsigned int *regs;
   	unsigned int clk_freq; 		/* Peripheral clock frequency */
 	unsigned int max_freq; 		/* Max supported SPI frequency */
+	unsigned int clkdiv;
+	unsigned int mode;
 	unsigned int cs_state; 		/* 0 = CS currently not asserted, 1 = CS currently asserted */
+	unsigned int used_cs;		/* Which CS shall be used for the current transfer */
+	unsigned int unused_cs;		/* Which CS should be used for de-selecting the target */
 	unsigned char byte_order; 	/* 1 = LSB shifted in/out first, 0 = MSB shifted in/out first */
 };
 
@@ -97,11 +98,15 @@ static int opentitan_qspi_probe(struct udevice *dev)
 {
 	struct opentitan_qspi_plat *plat = dev_get_plat(dev);
 	struct opentitan_qspi_priv *priv = dev_get_priv(dev);
+
 	u32 status = 0, loop_count = 0;
+
+	priv->unused_cs = 2;
+	priv->used_cs = 0;
 
 	priv->regs     = plat->regs;
 	priv->clk_freq = plat->clk_freq;
-    	priv->max_freq = plat->max_freq;
+    priv->max_freq = plat->max_freq;
 
 	// Disable all interrupts
 	writel(0, priv->regs + REG_INTR_ENABLE);
@@ -126,7 +131,8 @@ static int opentitan_qspi_probe(struct udevice *dev)
 
 	// Configure the CS
 	// De-select the connected peripheral by default
-	writel(OPENTITAN_QSPI_CS_UNUSED, priv->regs + REG_CSID);
+	dev_dbg(dev, "%s: Setting CS to %x\n", __func__, priv->unused_cs);
+	writel(priv->unused_cs, priv->regs + REG_CSID);
 
 	// Read the byte order
 	status = readl(priv->regs + REG_STATUS);
@@ -134,6 +140,8 @@ static int opentitan_qspi_probe(struct udevice *dev)
 
 	// Enable the SPI and its output
 	writel(OPENTITAN_QSPI_CONTROL_OUTPUT_EN | OPENTITAN_QSPI_CONTROL_SPI_EN, priv->regs + REG_CONTROL);
+
+	dev_info(dev, "regs = %x, unused_cs = %x used_cs = %x\n", priv->regs, priv->unused_cs, priv->used_cs);
 
 	return 0;
 }
@@ -151,14 +159,16 @@ static int opentitan_qspi_issue_dummy(struct udevice *dev, unsigned int bitlen, 
 
 	if(flags & SPI_XFER_BEGIN){
 		priv->cs_state = 1;
-		writel(OPENTITAN_QSPI_CS_USED, priv->regs + REG_CSID);
+		dev_dbg(dev, "%s: Setting CS to %x\n", __func__, priv->used_cs);
+		writel(priv->used_cs, priv->regs + REG_CSID);
 	}
 
 	// Just setting the CS
 	if(bitlen == 0){
 		if(flags & SPI_XFER_END){
 			priv->cs_state = 0;
-			writel(OPENTITAN_QSPI_CS_UNUSED, priv->regs + REG_CSID);
+			dev_dbg(dev, "%s: Setting CS to %x\n", __func__, priv->unused_cs);
+			writel(priv->unused_cs, priv->regs + REG_CSID);
 			opentitan_qspi_issue_dummy(dev, 8, 0);
 		}
 		return 0;
@@ -186,7 +196,8 @@ static int opentitan_qspi_issue_dummy(struct udevice *dev, unsigned int bitlen, 
 
 	if(flags & SPI_XFER_END){
 		priv->cs_state = 0;
-		writel(OPENTITAN_QSPI_CS_UNUSED, priv->regs + REG_CSID);
+		dev_dbg(dev, "%s: Setting CS to %x\n", __func__, priv->unused_cs);
+		writel(priv->unused_cs, priv->regs + REG_CSID);
 	}
 
 	return 0;
@@ -207,20 +218,23 @@ static int opentitan_qspi_xfer_single(struct udevice *child, unsigned int bitlen
 	}
 	
 	struct opentitan_qspi_priv *priv = dev_get_priv(dev);
+
 	unsigned int num_bytes 	= bitlen/8;
 	unsigned char csaat 	= !(flags & SPI_XFER_END) && (priv->cs_state || flags & SPI_XFER_BEGIN);
 	unsigned char dir   	= (din != NULL) | ((dout != NULL) << 1);
 
 	if(flags & SPI_XFER_BEGIN){
 		priv->cs_state = 1;
-		writel(OPENTITAN_QSPI_CS_USED, priv->regs + REG_CSID);
+		dev_dbg(dev, "%s: Setting CS to %x\n", __func__, priv->used_cs);
+		writel(priv->used_cs, priv->regs + REG_CSID);
 	}
 
 	// Just setting the CS
 	if(bitlen == 0){
 		if(flags & SPI_XFER_END){
 			priv->cs_state = 0;
-			writel(OPENTITAN_QSPI_CS_UNUSED, priv->regs + REG_CSID);
+			dev_dbg(dev, "%s: Setting CS to %x\n", __func__, priv->unused_cs);
+			writel(priv->unused_cs, priv->regs + REG_CSID);
 			opentitan_qspi_issue_dummy(dev, 8, 0);
 		}
 		return 0;
@@ -465,7 +479,8 @@ static int opentitan_qspi_xfer_single(struct udevice *child, unsigned int bitlen
 
 	if(flags & SPI_XFER_END){
 		priv->cs_state = 0;
-		writel(OPENTITAN_QSPI_CS_UNUSED, priv->regs + REG_CSID);
+		dev_dbg(dev, "%s: Setting CS to %x\n", __func__, priv->unused_cs);
+		writel(priv->unused_cs, priv->regs + REG_CSID);
 	}
 
 	return 0;
@@ -474,6 +489,8 @@ static int opentitan_qspi_xfer_single(struct udevice *child, unsigned int bitlen
 static int opentitan_qspi_xfer(struct udevice *dev, unsigned int bitlen,
 			       const void *dout, void *din, unsigned long flags)
 {
+	struct opentitan_qspi_priv *priv = dev_get_priv(dev);
+
 	// Yay a single transaction
 	if(bitlen <= OPENTITAN_QSPI_FIFO_DEPTH*8){
 		return opentitan_qspi_xfer_single(dev, bitlen, dout, din, flags);
@@ -512,7 +529,6 @@ static int opentitan_qspi_xfer(struct udevice *dev, unsigned int bitlen,
 static int opentitan_qspi_set_speed(struct udevice *dev, uint speed)
 {
 	unsigned long int clkdiv = 0;
-	u32 configopts = 0;
 	struct opentitan_qspi_priv *priv = dev_get_priv(dev);
 
 	if(speed > priv->max_freq){
@@ -520,11 +536,6 @@ static int opentitan_qspi_set_speed(struct udevice *dev, uint speed)
 		dev_info(dev, "Req: %d, Max: %d\n", speed, priv->max_freq);
 		speed = priv->max_freq;
 	}
-
-	dev_dbg(dev, "Setting SPI frequency to %d Hz\n", speed);
-
-	// SPI_CLK = SYS_CLK/(2*(clkdiv+1))
-	// clkdiv = SYS_CLK/(2*SPI_CLK) - 1
 
 	clkdiv = priv->clk_freq + 2*speed - 1L;
 	clkdiv = clkdiv/(2*speed) - 1L;
@@ -534,34 +545,54 @@ static int opentitan_qspi_set_speed(struct udevice *dev, uint speed)
 		clkdiv = ~(-1 << 16);
 	}
 
-	configopts = (u32) readl(priv->regs + REG_CONFIGOPTS_0 + OPENTITAN_QSPI_CS_USED);
-	configopts = (configopts & (-1 << 16)) | (clkdiv & ~(-1 << 16));
-	writel(configopts, priv->regs + REG_CONFIGOPTS_0 + OPENTITAN_QSPI_CS_USED);
-
-	// This is dirty... we are wasting a whole chip select just to be able to control the chipselect
-	// independently of the rest of the SPI bus
-	writel(configopts, priv->regs + REG_CONFIGOPTS_0 + OPENTITAN_QSPI_CS_UNUSED);
-
+	dev_dbg(dev, "Saving SPI clkdiv to %x\n", clkdiv);
+	priv->clkdiv = clkdiv;
 	return 0;
 }
 
 static int opentitan_qspi_set_mode(struct udevice *dev, uint mode)
 {
 	struct opentitan_qspi_priv *priv = dev_get_priv(dev);
-	unsigned int configopts = 0;
 
-	configopts = (unsigned int) readl(priv->regs + REG_CONFIGOPTS_0 + OPENTITAN_QSPI_CS_USED);
-	configopts = (configopts & 0xFFFF) | (0xFFF << 16) | ((mode & 0x3) << 30);
-	writel(configopts, priv->regs + REG_CONFIGOPTS_0 + OPENTITAN_QSPI_CS_USED);
-	writel(configopts, priv->regs + REG_CONFIGOPTS_0 + OPENTITAN_QSPI_CS_UNUSED);
+	dev_dbg(dev, "Saving SPI mode to %x\n", mode);
+	priv->mode = mode;
+
+	return 0;
+}
+
+static int opentitan_qspi_claim_bus(struct udevice *dev)
+{
+	unsigned int configopts = 0;
+	// Here, work on the priv of the parent (SPI master) as
+	// every other function is called with the SPI master as *dev
+	struct opentitan_qspi_priv *parent_priv = dev_get_priv(dev->parent);
+	struct dm_spi_slave_plat *slave_plat = dev_get_parent_plat(dev);
+
+	parent_priv->used_cs = slave_plat->cs;
+
+	configopts = (unsigned int) readl(parent_priv->regs + REG_CONFIGOPTS_0 + parent_priv->used_cs);
+	configopts = (configopts & 0xFFFF) | (0xFFF << 16) | ((parent_priv->mode & 0x3) << 30);
+	writel(configopts, parent_priv->regs + REG_CONFIGOPTS_0 + parent_priv->used_cs);
+	writel(configopts, parent_priv->regs + REG_CONFIGOPTS_0 + parent_priv->unused_cs);
+
+	configopts = (u32) readl(parent_priv->regs + REG_CONFIGOPTS_0 + parent_priv->used_cs);
+	configopts = (configopts & (-1 << 16)) | (parent_priv->clkdiv & ~(-1 << 16));
+	writel(configopts, parent_priv->regs + REG_CONFIGOPTS_0 + parent_priv->used_cs);
+
+	// This is dirty... we are wasting a whole chip select just to be able to control the chipselect
+	// independently of the rest of the SPI bus
+	writel(configopts, parent_priv->regs + REG_CONFIGOPTS_0 + parent_priv->unused_cs);
+
+	dev_info(dev, "%s: Set mode and speed for parent_priv->used_cs=%x , configopts=%x\n", __func__, parent_priv->used_cs, configopts);
 
 	return 0;
 }
 
 static const struct dm_spi_ops opentitan_qspi_ops = {
-	.xfer			= opentitan_qspi_xfer,
-	.set_speed		= opentitan_qspi_set_speed,
-	.set_mode		= opentitan_qspi_set_mode,
+	.claim_bus      = opentitan_qspi_claim_bus,
+	.xfer           = opentitan_qspi_xfer,
+	.set_speed      = opentitan_qspi_set_speed,
+	.set_mode       = opentitan_qspi_set_mode,
 };
 
 static const struct udevice_id opentitan_qspi_ids[] = {
