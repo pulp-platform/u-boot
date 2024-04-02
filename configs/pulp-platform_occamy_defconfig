@@ -13,6 +13,7 @@ CONFIG_FIT=y
 CONFIG_SPL_LOAD_FIT_ADDRESS=0x90000000
 CONFIG_OF_BOARD_SETUP=y
 CONFIG_BOOTDELAY=5
+CONFIG_HUSH_PARSER=y
 CONFIG_USE_BOOTCOMMAND=y
 CONFIG_BOOTCOMMAND="fdt addr ${fdtcontroladdr}; fdt get value remote-boot /soc/eth0 remote-boot; dhcp 0x90000000 ${remote-boot}; bootm 90000000 - ${fdtcontroladdr}"
 CONFIG_USE_BOOTARGS=y
