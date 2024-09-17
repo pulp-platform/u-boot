@@ -25,7 +25,7 @@ ifeq ($(CONFIG_CMODEL_MEDANY),y)
 endif
 
 # hacky fix, to make the image for Cheshire + Ara
-ifdef RVV
+ifeq ($(RVV), 1)
 	ARCH_FLAGS=-march=$(ARCH_BASE)$(ARCH_A)$(ARCH_C)_zicsr_zifencei -mabi=$(ABI) -mcmodel=$(CMODEL)
 else
 	ARCH_FLAGS=-march=$(ARCH_BASE)$(ARCH_A)$(ARCH_C) -mabi=$(ABI) -mcmodel=$(CMODEL)
